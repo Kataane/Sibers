@@ -1,6 +1,6 @@
-﻿namespace Sibers.Entities;
+﻿namespace Sibers.Entities.Commands;
 
-public sealed record Project : Entity<Guid>, IAggregateRoot
+public record UpdateProjectCommand : ICommand<Result>
 {
     public required string Name { get; set; }
     
@@ -17,4 +17,4 @@ public sealed record Project : Entity<Guid>, IAggregateRoot
 
     public ICollection<Employee> Employees { get; set; } = new List<Employee>();
     public ICollection<Goal> Goals { get; set; } = new List<Goal>();
-}
+};

@@ -1,4 +1,4 @@
-﻿namespace Sibers.Entities.Enums;
+﻿namespace Sibers.Entities;
 
 public enum GoalStatus
 {

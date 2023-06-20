@@ -1,6 +1,6 @@
 ﻿namespace Sibers.Entities.Base;
 
-public class Entity
+public record Entity<TId>
 {
-    public Guid Id { get; set; }
+    public required TId Id { get; set; }
 }

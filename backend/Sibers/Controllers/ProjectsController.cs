@@ -1,343 +1,118 @@
-﻿using Sibers.Entities;
-using Sibers.Entities.Base;
-
-namespace Sibers.Controllers;
+﻿namespace Sibers.Controllers;
 
 [ApiController]
-[Route("[controller]")]
-[Authorize(Roles = $"{Roles.Lead}, {Roles.Manager}, {Roles.Employee}")]
-public class ProjectsController : BaseController<ServiceForCollection, Project>
+[Route("api/[controller]")]
+public class ProjectsController : ControllerBase
 {
-    private readonly UserManager<EmployeeUser> userManager;
-    public ProjectsController(UserManager<EmployeeUser> userManager, ServiceForCollection project) : base(project)
+    private readonly ISender sender;
+    private readonly IMapper mapper;
+
+    public ProjectsController(ISender sender, IMapper mapper)
     {
-        this.userManager = userManager;
+        this.sender = sender;
+        this.mapper = mapper;
     }
 
     [HttpGet]
-    public async Task<IActionResult> OrderBy([FromQuery]ProjectSort sort, [FromQuery]string? propertyNameForOrder)
-    {
-        var mail = User.Identity?.Name;
-        var user = await userManager.FindByEmailAsync(mail);
+    [EnableQuery]
+    [ProducesResponseType(typeof(IEnumerable<ProjectResponse>), StatusCodes.Status200OK)]
+    public async Task<IActionResult> Get(
+        ODataQueryOptions<Project> queryOptions, 
+        CancellationToken cancellationToken) => 
+        await sender
+            .Send(new GetProjectsQuery(queryOptions, ProjectODataValidationSettings.Default), cancellationToken)
+            .Map(Ok);
 
-        try
-        {
-            var filterPipeline = new ProjectFilterPipeline(sort, user);
-            var filter = filterPipeline.Filter;
+    /// <summary>
+    /// Gets the project for the specified identifier.
+    /// </summary>
+    /// <param name="projectId">The project identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The budget with the specified identifier, if it exists.</returns>
+    [HttpGet("{projectId:guid}")]
+    [ProducesResponseType(typeof(ProjectResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> GetProjectById(
+        Guid projectId, CancellationToken cancellationToken) => 
+        await Maybe<GetProjectByIdQuery>
+        .From(new GetProjectByIdQuery(projectId))
+        .Bind(projectByIdQuery => sender.Send(projectByIdQuery, cancellationToken))
+        .Match(Ok, NotFound);
 
-            var result = Service.GetWithInclude(
-                nameof(Project.Employees),
-                sort.Page, sort.PageSize,
-                filter, propertyNameForOrder);
+    /// <summary>
+    /// Creates the project based on the specified request.
+    /// </summary>
+    /// <param name="createProjectRequest">The create project request.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The empty response if the operation was successful, otherwise an error response.</returns>
+    [HttpPost]
+    [ProducesResponseType(typeof(EntityCreatedResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status422UnprocessableEntity)]
+    public async Task<IActionResult> CreateProject(
+        [FromBody] CreateProjectRequest createProjectRequest,
+        CancellationToken cancellationToken) =>
+        await Result
+            .Create(createProjectRequest, Entities.Strings.ApiErrors_UnProcessableRequest)
+            .Map(request => mapper.Map<CreateProjectCommand>(request))
+            .Bind(command => sender.Send(command, cancellationToken))
+            .Match(CreatedAtAction, BadRequest);
 
-            return Ok(result);
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e);
-            return BadRequest();
-        }
-    }
-
-
-    #region Employee
-
-    [HttpGet]
-    [Route("{projectId}/employees")]
-    [Authorize(Roles = $"{Roles.Lead}, {Roles.Manager}")]
-    public async Task<ActionResult<Project>> GetEmployees(Guid projectId)
-    {
-        try
-        {
-            if (!await HaveAccess(projectId)) return BadRequest();
-
-            var collection = await Service.GetCollection<Project, Employee, First>(projectId, nameof(Project.Employees));
-            return Ok(collection);
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e);
-            return BadRequest();
-        }
-    }
-
+    /// <summary>
+    /// Updates the specified project based on the specified request.
+    /// </summary>
+    /// <param name="updateProjectRequest">The update budget request.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The empty response if the operation was successful, otherwise an error response.</returns>
     [HttpPut]
-    [Route("{projectId}/employees/{employeeId}")]
-    [Authorize(Roles = $"{Roles.Lead}, {Roles.Manager}")]
-    public async Task<ActionResult<Project>> AddEmployee(Guid projectId, Guid employeeId)
-    {
-        try
-        {
-            if (!await HaveAccess(projectId)) return BadRequest();
-
-            var project = await Service.AddToCollection<Project, Employee, First>(
-                projectId, employeeId, 
-                nameof(Project.Employees));
-            await Service.SaveAsync();
-
-            return Ok(project);
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e);
-            return BadRequest();
-        }
-    }
-
+    [ProducesResponseType(typeof(ProjectResponse), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiErrorResponse), StatusCodes.Status422UnprocessableEntity)]
+    public async Task<IActionResult> UpdateBudget(
+        [FromBody] UpdateProjectRequest updateProjectRequest,
+        CancellationToken cancellationToken) =>
+        await Result.Create(updateProjectRequest, Entities.Strings.ApiErrors_UnProcessableRequest)
+            .Map(request => mapper.Map<UpdateProjectCommand>(request))
+            .Bind(command => sender.Send(command, cancellationToken))
+            .Match(Ok, BadRequest);
+    
+    /// <summary>
+    /// Deletes the specified project with the specified identifier.
+    /// </summary>
+    /// <param name="budgetId">The project identifier.</param>
+    /// <param name="cancellationToken">The cancellation token.</param>
+    /// <returns>The empty response if the operation was successful, otherwise an error response.</returns>
     [HttpDelete]
-    [Route("{projectId}/employees/{employeeId}")]
-    [Authorize(Roles = $"{Roles.Lead}, {Roles.Manager}")]
-    public async Task<ActionResult<Project>> RemoveEmployee(Guid projectId, Guid employeeId)
-    {
-        try
-        {
-            if (!await HaveAccess(projectId)) return BadRequest();
+    [ProducesResponseType(StatusCodes.Status204NoContent)]
+    [ProducesResponseType(StatusCodes.Status404NotFound)]
+    public async Task<IActionResult> DeleteBudget(Guid budgetId, CancellationToken cancellationToken) =>
+        await Result.Success(new DeleteBudgetCommand(budgetId))
+            .Bind(command => sender.Send(command, cancellationToken))
+            .Match(NoContent, NotFound);
+    
+    /// <summary>
+    /// Creates an <see cref="OkObjectResult"/> that produces a <see cref="StatusCodes.Status200OK"/>.
+    /// </summary>
+    /// <param name="value">The value.</param>
+    /// <returns>The created <see cref="OkObjectResult"/> for the response.</returns>
+    protected new IActionResult Ok(object value) => base.Ok(value);
+    
+    protected new IActionResult NoContent() => base.NoContent();
 
-            await Service.RemoveFromCollection<Project, Employee, First>(projectId, employeeId, nameof(Project.Employees));
-            await Service.SaveAsync();
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e);
-            return BadRequest();
-        }
-
-        return NoContent();
-    }
-
-    #endregion
-
-
-    #region Goal
-
-    [HttpGet]
-    [Route("{projectId}/goals")]
-    [Authorize(Roles = $"{Roles.Lead}, {Roles.Manager}")]
-    public async Task<ActionResult<Project>> GetGoal(Guid projectId)
-    {
-        try
-        {
-            if (!await HaveAccess(projectId)) return BadRequest();
-
-            var goals = await Service.GetCollection<Project, Goal, Second>(projectId, nameof(Project.Goals));
-
-            return Ok(goals);
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e);
-            return BadRequest();
-        }
-    }
-
-    [HttpPut]
-    [Route("{projectId}/goals/{goalId}")]
-    [Authorize(Roles = $"{Roles.Lead}, {Roles.Manager}")]
-    public async Task<ActionResult<Project>> AddGoal(Guid projectId, Guid goalId)
-    {
-        try
-        {            
-            if (!await HaveAccess(projectId)) return BadRequest();
-
-            var project = await Service.AddToCollection<Project, Goal, Second>(
-                projectId, goalId, 
-                nameof(Project.Goals));
-            await Service.SaveAsync();
-
-            return Ok(project);
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e);
-            return BadRequest();
-        }
-    }
-
-    [HttpDelete]
-    [Route("{projectId}/goals/{goalId}")]
-    [Authorize(Roles = $"{Roles.Lead}, {Roles.Manager}")]
-    public async Task<ActionResult<Project>> RemoveGoal(Guid projectId, Guid goalId)
-    {
-        try
-        {
-            if (!await HaveAccess(projectId)) return BadRequest();
-
-            await Service.RemoveFromCollection<Project, Goal, Second>(projectId, goalId, nameof(Project.Goals));
-            await Service.SaveAsync();
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e);
-            return BadRequest();
-        }
-
-        return NoContent();
-    }
-
-    #endregion
-
-    #region Client
-
-    [HttpGet]
-    [Route("{projectId}/clients")]
-    public async Task<ActionResult<Client>> GetClient(Guid projectId)
-    {
-        try
-        {
-            if (!await HaveAccess(projectId)) return BadRequest();
-
-            var project = await Service.GetWithIncludeAsync<Project>(projectId, nameof(Project.Client));
-            return Ok(project?.Client);
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e);
-            return BadRequest();
-        }
-    }
-
-
-    [HttpPut]
-    [Route("{projectId}/clients/{clientId}")]
-    public async Task<ActionResult> AddClient(Guid projectId, Guid clientId)
-    {
-        try
-        {
-            if (!await HaveAccess(projectId)) return BadRequest();
-
-            var client = await Service.GetWithIncludeAsync<Client>(clientId);
-            var project = await Service.GetWithIncludeAsync<Project>(projectId);
-
-            if (project is null) return NotFound(project);
-            if (client is null) return NotFound(client);
-
-            project.Client = client;
-            await Service.SaveAsync();
-
-            return Ok(project);
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e);
-            return BadRequest();
-        }
-    }
-
-    [HttpDelete]
-    [Route("{projectId}/clients")]
-    public async Task<ActionResult<Project>> RemoveClient(Guid projectId)
-    {
-        try
-        {
-            if (!await HaveAccess(projectId)) return BadRequest();
-
-            var project = await Service.GetWithIncludeAsync<Project>(projectId);
-
-            if (project is null) return NotFound(project);
-
-            project.Client = null;
-
-            await Service.SaveAsync();
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e);
-            return BadRequest();
-        }
-
-        return NoContent();
-    }
-
-    #endregion
-
-
-    #region Implementer
-
-    [HttpGet]
-    [Route("{projectId}/implementers/")]
-    public async Task<ActionResult<Implementer>> GetImplementer(Guid projectId)
-    {
-        try
-        {
-            if (!await HaveAccess(projectId)) return BadRequest();
-
-            var project = await Service.GetWithIncludeAsync<Project>(projectId, nameof(Project.Implementer));
-            return Ok(project?.Implementer);
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e);
-            return BadRequest();
-        }
-    }
-
-
-    [HttpPut]
-    [Route("{projectId}/implementers/{implementerId}")]
-    public async Task<ActionResult<Project>> AddImplementer(Guid projectId, Guid implementerId)
-    {
-        try
-        {
-            if (!await HaveAccess(projectId)) return BadRequest();
-
-            var project = await Service.GetWithIncludeAsync<Project>(projectId);
-            var implementer = await Service.GetWithIncludeAsync<Implementer>(implementerId);
-
-            if (project is null) return NotFound(project);
-            if (implementer is null) return NotFound(implementer);
-
-            project.Implementer = implementer;
-
-            await Service.SaveAsync();
-
-            return Ok(project);
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e);
-            return BadRequest();
-        }
-    }
-
-    [HttpDelete]
-    [Route("{projectId}/implementers/")]
-    public async Task<ActionResult<Project>> RemoveImplementers(Guid projectId)
-    {
-        try
-        {
-            if (!await HaveAccess(projectId)) return BadRequest();
-
-            var project = await Service.GetWithIncludeAsync<Project>(projectId);
-
-            if (project is null) return NotFound(project);
-
-            project.Implementer = null;
-
-            await Service.SaveAsync();
-        }
-        catch (Exception e)
-        {
-            Console.WriteLine(e);
-            return BadRequest();
-        }
-
-        return NoContent();
-    }
-
-    #endregion
-
-    [NonAction]
-    public async Task<bool> HaveAccess(Guid projectId)
-    {
-        var mail = User.Identity?.Name;
-        var user = await userManager.FindByEmailAsync(mail);
-
-        var collection = await Service.GetCollection<Project, Employee, First>(projectId, nameof(Project.Employees));
-
-        if (collection is null) return false;
-
-        var ownProject = collection.Any(e => e.Id == user.EmployeeId);
-        return user.Role is not Roles.Manager || ownProject;
-    }
-
+    protected IActionResult CreatedAtAction<TId>(BaseResponse<TId> value) => 
+        base.CreatedAtAction(nameof(GetProjectById), new {id = value.Id}, value);
+    
+    /// <summary>
+    /// Creates an <see cref="NotFoundResult"/> that produces a <see cref="StatusCodes.Status404NotFound"/>.
+    /// </summary>
+    /// <returns>The created <see cref="NotFoundResult"/> for the response.</returns>
+    protected new IActionResult NotFound() => base.NotFound();
+    
+    /// <summary>
+    /// Creates an <see cref="BadRequestObjectResult"/> that produces a <see cref="StatusCodes.Status400BadRequest"/>.
+    /// response based on the specified <see cref="Result"/>.
+    /// </summary>
+    /// <param name="error">The error.</param>
+    /// <returns>The created <see cref="BadRequestObjectResult"/> for the response.</returns>
+    protected IActionResult BadRequest(Error error) => BadRequest(new ApiErrorResponse(new[] { error }));
 }

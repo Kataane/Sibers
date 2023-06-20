@@ -1,6 +1,6 @@
-﻿namespace Sibers.Entities;
+﻿namespace Sibers.Entities.Commands;
 
-public sealed record Project : Entity<Guid>, IAggregateRoot
+public record CreateProjectCommand : ICommand<Result<EntityCreatedResponse>>
 {
     public required string Name { get; set; }
     

@@ -1,45 +1,47 @@
-using Sibers;
+using Sibers.Profiles;
+using Sibres.Business.Factories;
 
 var builder = WebApplication.CreateBuilder(args);
 
-var  MyAllowSpecificOrigins = "_myAllowSpecificOrigins";
-builder.Services.AddCors(options =>
+builder.Services.AddDbContext<SibersContext>(opt => opt.UseInMemoryDatabase("Test"));
+
+builder.Services.AddScoped(typeof(IRepository<>), typeof(EfRepository<>));
+builder.Services.AddScoped(typeof(IReadRepository<>), typeof(EfRepository<>));
+
+builder.Services.AddSingleton<IAuthorizationHandler, HasScopeHandler>();
+
+builder.Services.AddMediator();
+
+builder.Services.AddAutoMapper(typeof(ProjectProfile));
+
+builder.Services.AddSingleton<IProjectFactory, ProjectFactory>();
+
+var modelBuilder = new ODataConventionModelBuilder();
+modelBuilder.EntitySet<Project>("projects");
+
+builder.Services.AddControllers().AddOData(options => options
+        .SkipToken()
+        .EnableQueryFeatures(50)
+        .AddRouteComponents("api", modelBuilder.GetEdmModel()))
+    .AddJsonOptions(options => options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles);
+
+builder.Services.AddSwaggerGen(c =>
 {
-    options.AddPolicy(name: MyAllowSpecificOrigins,
-        policy  =>
-        {
-            policy.WithOrigins("http://localhost:3000/").AllowAnyHeader().AllowAnyMethod().AllowAnyOrigin();
-        });
+    c.SwaggerDoc("v1", new OpenApiInfo { Title = "AspNet6WithOData", Version = "v1" });
 });
-
-builder.Services.AddControllers()
-    .AddJsonOptions(options =>
-        options.JsonSerializerOptions.ReferenceHandler = ReferenceHandler.IgnoreCycles);
-
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-
-var connectionString = builder.Configuration.GetConnectionString("Default");
-builder.Services.AddSqlDb(connectionString);
-
-builder.Services.AddDbContext<IdentityContext>(options =>
-    options.UseSqlServer(builder.Configuration.GetConnectionString("Identity")));
-builder.Services.AddIdentity<EmployeeUser, IdentityRole>().AddEntityFrameworkStores<IdentityContext>();
-
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
+if (app.Environment.IsDevelopment()) 
 {
+    app.UseDeveloperExceptionPage();
     app.UseSwagger();
-    app.UseSwaggerUI();
+    app.UseSwaggerUI(c => c.SwaggerEndpoint("/swagger/v1/swagger.json", "Sibers"));
 }
 
 await app.Services.SeedData();
-await app.Services.SeedIdentity();
 
-app.UseCors(MyAllowSpecificOrigins);
-app.UseHttpsRedirection();
-app.UseAuthentication();
-app.UseAuthorization();
-app.MapControllers();
+app.UseRouting();
+
+app.UseEndpoints(endpoints => endpoints.MapControllers());
+
 app.Run();

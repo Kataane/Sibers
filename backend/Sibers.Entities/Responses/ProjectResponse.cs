@@ -1,6 +1,6 @@
-﻿namespace Sibers.Entities;
+﻿namespace Sibers.Entities.Responses;
 
-public sealed record Project : Entity<Guid>, IAggregateRoot
+public record ProjectResponse : BaseResponse<Guid>
 {
     public required string Name { get; set; }
     
@@ -18,3 +18,18 @@ public sealed record Project : Entity<Guid>, IAggregateRoot
     public ICollection<Employee> Employees { get; set; } = new List<Employee>();
     public ICollection<Goal> Goals { get; set; } = new List<Goal>();
 }
+
+public record BaseResponse<TId>
+{
+    protected BaseResponse(TId id)
+    {
+        Id = id;
+    }
+
+    protected BaseResponse()
+    {
+        Id = default;
+    }
+
+    public TId? Id { get; set; }
+};
